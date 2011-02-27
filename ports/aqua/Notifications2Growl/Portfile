@@ -6,7 +6,7 @@ PortGroup			xcode 1.0
 
 name                Notifications2Growl
 version             0.1
-categories-append      gnome
+categories-append   gnome
 license             GPLv2
 maintainers         elelay
 platforms           darwin
