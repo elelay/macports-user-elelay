@@ -30,7 +30,13 @@ depends_lib         port:gtk2 \
 
 # StartupItem
 startupitem.create		yes
-startupitem.executable	/usr/bin/open -a ${xcode.destroot.path}/Notifications2Growl.app
+
+# can't use startupitem.executable because open exits immediately
+# (and can't use open -W because it's not available on Tiger
+# can't invoke ${applications_dir}/Notifications2Growl.app/Contents/MacOS/Notifications2Growl
+# because then the icon shows up in the dock
+startupitem.start       "/usr/bin/open -a ${applications_dir}/Notifications2Growl.app"
+
 startupitem.location	LaunchAgents
 
 # can't prevent the private Framework from being copied !
