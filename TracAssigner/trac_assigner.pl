@@ -117,7 +117,7 @@ sub parseResults {
 # it will work fine.
 ############################
 sub initPortExpect {
-	my $exp = Expect->spawn("ssh mini port") or die "Cannot execute port command: $!\n";
+	my $exp = Expect->spawn("port") or die "Cannot execute port command: $!\n";
 
 	my @results = $exp->expect(10, 
 		[ qr/Macports 2\.\d\.\d$/, sub {exp_continue;} ],
