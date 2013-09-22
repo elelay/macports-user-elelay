@@ -50,6 +50,7 @@ use constant OK       => 'ok';
 sub trim {
 	my ($s) = @_; 
 	$s =~ s/^\s+(.+)\s$/$1/;
+	$s =~ s/\r//g; # remove rogue \r not trimmed by above expression
 	return $s;
 }
 
@@ -62,12 +63,14 @@ $ua->agent("User-Agent: $0");
 
 ############################
 # fetch all new tickets on ports with owner macports-tickets
+# don't fetch requests for new ports or port submissions since they wouldn't
+# have an existing port.
 # @param  limit how many tickets to fetch
 # @return unparsed HTML results of advanced query
 ############################
 sub fetchResults {
 	my ($limit) = @_;
-    my $url = 'https://trac.macports.org/query?status=new&owner=^macports-tickets%40lists.macosforge.org&component=ports&col=id&col=owner&col=port&col=cc&report=11&max='. $limit;
+    my $url = 'https://trac.macports.org/query?status=new&type=!request&type=!submission&owner=^macports-tickets%40lists.macosforge.org&component=ports&col=id&col=owner&col=port&col=cc&report=11&max='. $limit;
     
     my $response = $ua->request(
     	HTTP::Request->new( GET => $url )
@@ -119,7 +122,7 @@ sub parseResults {
 sub initPortExpect {
 	my $exp = Expect->spawn("port") or die "Cannot execute port command: $!\n";
 
-	my @results = $exp->expect(10, 
+	my @results = $exp->expect(30, 
 		[ qr/Macports 2\.\d\.\d$/, sub {exp_continue;} ],
 		[ qr/Warning: port definitions are more than two weeks old.*$/, 
 			sub { print "W: port definitions are more than two weeks old.\n";
@@ -157,7 +160,7 @@ sub getMaintainer {
 	if($matched_pattern_position == 1){
 		return ();
 	} elsif($matched_pattern_position == 2){
-		my $maintainers = ($exp->matchlist)[0];
+		my $maintainers = trim(($exp->matchlist)[0]);
 		return split(/, /,$maintainers);
 	}
 }
@@ -178,7 +181,7 @@ sub setMaintainers {
 		return -2;
 	}
 
-	my @maintainers = ();
+	my %maintainers_dedup = ();
 	for my $port (@ports){
 		if($port =~ m/\w+/ ){
 			my @maintainerstmp = &getMaintainer($exp, $port);
@@ -186,10 +189,15 @@ sub setMaintainers {
 				my $id = $ticket{ID};
 				print "W: $id wrong portname: $port\n";
 			}
-			push(@maintainers,grep {!/(open)|(no)maintainer\@macports.org/} @maintainerstmp);
-			#print "maintainers for $port: " . join(', ',@maintainerstmp) . "\n";
+			# print "maintainers for $port: " . join(', ',@maintainerstmp) . "\n";
+			# use a hash so that if same maintainer for multiple ports, the maintainer
+			# is not added multiple times (e.g. ticket #23279)
+			for my $maintainer (grep {!/(open)|(no)maintainer\@macports.org/} @maintainerstmp){
+				$maintainers_dedup{$maintainer} = 1;
+			}
 		}
 	}
+	my @maintainers = keys(%maintainers_dedup);
 	$ticketref->{MAINTAINER} = \@maintainers;
 
 	if(scalar(@maintainers == 0)){
@@ -217,7 +225,7 @@ sub loginToTRAC {
 	
 	my $response = $ua->post($url, \%data);
 	unless ($response->code == 302) {
-	   print ("couldn't connect to the forge : " . $response->status_line . "\n");
+	   print ("E: couldn't connect to the forge : " . $response->status_line . "\n");
 	   return -1;
 	}
 	
@@ -253,7 +261,9 @@ sub assign {
 		if($existingcc ne ''){
 			$cc = "$existingcc, ";
 		}
-		$cc = join(', ',@maintainers);
+		# don't add already cc-ed maintainers
+		@maintainers = grep { index($cc,$_) == -1 } @maintainers;
+		$cc .= join(', ',@maintainers);
 	}else{
 		$cc = $existingcc;
 	}
@@ -267,7 +277,7 @@ sub assign {
     
     my $response = $ua->get( $url );
     unless($response->is_success) {
-    	print "Couldn't get ticket $url ", $response->status_line, "\n";
+    	print "E: Couldn't get ticket $url ", $response->status_line, "\n";
     	return -1;
     }
 	
@@ -276,7 +286,7 @@ sub assign {
     if($content =~ /<input type="hidden" name="__FORM_TOKEN" value="([^"]+)"/) {
     	$token = $1;
     }else{
-    	print "no token in ticket contents";
+    	print "E: no token in ticket contents";
     	return -1;
     }
     my $cnum;
@@ -323,6 +333,7 @@ sub assign {
 ############################
 
 my $pretend   = 0;
+my $me        = 0;
 my $help      = 0;
 my $login     = '';
 my $password  = '';
@@ -330,11 +341,12 @@ my $ticket_id ='';
 my $limit     = 10000;
 
 my $usage = <<EUSAGE;
-Usage: $0 [-p/retend] <LOGIN> <PASSWORD> [TICKET_ID]
+Usage: $0 [-p/retend] [-l/imit=n] [-me] <LOGIN> <PASSWORD> [TICKET_ID]
        $0 -h/elp
 
        -p/retend    don't modify TRAC contents
        -l/imit      only deal with n tickets ($limit by default)
+       -me          only assign tickets for ports maintained by <LOGIN>
        -h/elp       print this usage
 
        LOGIN        login to trac.macports.org
@@ -344,7 +356,7 @@ Usage: $0 [-p/retend] <LOGIN> <PASSWORD> [TICKET_ID]
 EUSAGE
 
 GetOptions ("pretend" => \$pretend, "help" => \$help,
-	        "limit=i" => \$limit)  || die $usage;
+	        "limit=i" => \$limit, "me" => \$me)  || die $usage;
 
 if($help){
 	print $usage;
@@ -368,7 +380,9 @@ die "$usage\nlimit must be strictly positive\n" unless($limit > 0);
 ############################
 # main part
 ############################
-my $status = loginToTRAC($login,$password);
+
+my $status;
+loginToTRAC($login,$password) if(!$pretend);
 if($status == 0){
 	print "I: successfuly logged in as $login\n";
 }elsif($pretend){
@@ -399,6 +413,13 @@ for my $ticketref (@tickets){
 			print "W: $id doomed: no maintainer\n";
 			$stats{NO_MAINT}++;
 		}else{
+			if($me){
+				my @maintainers = @{$ticketref->{MAINTAINER}};
+				unless(grep $_ eq $login,@maintainers){
+					print "D: ignoring ticket not maintained by me: $id\n";
+					next;
+				}
+			}
 			$status = &assign($ticketref,$pretend);
 			if($status == -1){
 				die "E: error assigning $id"
