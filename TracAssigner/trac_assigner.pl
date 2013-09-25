@@ -34,6 +34,7 @@ use constant ID => 'id';
 use constant PORT => 'port';
 # maintainer (internal)
 use constant MAINTAINER => 'maintainer';
+use constant FIRST_MAINTAINER => 'firstmaintainer';
 # cc
 use constant CC => 'cc';
 
@@ -41,6 +42,7 @@ use constant CC => 'cc';
 use constant NO_PORT  => 'no_port';
 use constant NO_MAINT => 'no_maint';
 use constant OK       => 'ok';
+use constant UPTODATE => 'uptodate';
 
 ############################
 # utility function, removes whitespace before and after
@@ -175,32 +177,52 @@ sub getMaintainer {
 sub setMaintainers {
 	my ($exp,$ticketref) = @_;
 	my %ticket = %{$ticketref};
+	my $id = $ticket{ID};
 	my @ports = @{$ticket{PORT}};
 
 	if(scalar(@ports) == 0){
 		return -2;
 	}
 
+	# only assign to someone if he is the first maintainer of all ports,
+	# else everybody is cc
+	my $firstmaintainer;
+	my $cc_everybody = 0;
 	my %maintainers_dedup = ();
 	for my $port (@ports){
 		if($port =~ m/\w+/ ){
 			my @maintainerstmp = &getMaintainer($exp, $port);
 			if(scalar(@maintainerstmp) == 0){
-				my $id = $ticket{ID};
 				print "W: $id wrong portname: $port\n";
 			}
 			# print "maintainers for $port: " . join(', ',@maintainerstmp) . "\n";
+			
+			@maintainerstmp = grep {!/(open)|(no)maintainer\@macports.org/} @maintainerstmp;
+			if(!$cc_everybody && scalar(@maintainerstmp) > 0){
+				my $first = shift(@maintainerstmp);
+				if(defined($firstmaintainer) && $firstmaintainer ne $first){
+					print "D: $id multiple ports with different first maintainers, cc-ing everybody\n";
+					$cc_everybody = 1;
+					push(@maintainerstmp,$firstmaintainer,$first);
+				}else{
+					$firstmaintainer = $first;
+				}
+			}
+			
 			# use a hash so that if same maintainer for multiple ports, the maintainer
 			# is not added multiple times (e.g. ticket #23279)
-			for my $maintainer (grep {!/(open)|(no)maintainer\@macports.org/} @maintainerstmp){
+			for my $maintainer (@maintainerstmp){
 				$maintainers_dedup{$maintainer} = 1;
 			}
 		}
 	}
 	my @maintainers = keys(%maintainers_dedup);
 	$ticketref->{MAINTAINER} = \@maintainers;
+	if(!$cc_everybody){
+		$ticketref->{FIRST_MAINTAINER} = $firstmaintainer;
+	}
 
-	if(scalar(@maintainers == 0)){
+	if(scalar(@maintainers == 0) && !defined($firstmaintainer)){
 			return -3;
 	}else{
 		return 0;
@@ -237,7 +259,7 @@ sub loginToTRAC {
 # and CC any other maintainer.
 # @param ticketref reference to the ticket hash. Ticket must have maintainers.
 # @param pretend   if true, will not modify TRAC but return 0
-# @return          0 if OK, -1 on error
+# @return          0 if OK, -1 on error, 1 if no need to update
 #
 sub assign {
 	my ($ticketref,$pretend) = @_;
@@ -247,17 +269,21 @@ sub assign {
 	my $id = $ticket{ID};
 	
 	my @maintainers = @{$ticket{MAINTAINER}};
+	my $firstmaintainer = $ticket{FIRST_MAINTAINER};
+	die "ticket $id must have maintainers" unless(defined($firstmaintainer) || scalar(@maintainers) > 0);
 	
-	die "ticket $id must have maintainers" unless(scalar(@maintainers) > 0);
-	
-	my $firstmaintainer = shift @maintainers;
-	
-	my $comment = "automatically assigning to first maintainer";
-
+	my $comment;
+	if(defined($firstmaintainer)){
+		$comment = "automatically assigning to first maintainer";
+	}
 	my $existingcc = $ticket{CC};
 	my $cc;
 	if(scalar(@maintainers) > 0){
-		$comment = "$comment, cc to other maintainers.";
+		if(defined($comment)){
+			$comment .= ", cc to other maintainers.";
+		}else{
+			$comment .= "cc to all maintainers.";
+		}
 		if($existingcc ne ''){
 			$cc = "$existingcc, ";
 		}
@@ -266,6 +292,11 @@ sub assign {
 		$cc .= join(', ',@maintainers);
 	}else{
 		$cc = $existingcc;
+	}
+	
+	if(!defined($firstmaintainer) && $cc eq $existingcc){
+		print "D: $id not changed so not modifying in trac\n";
+		return 1;
 	}
 	
 	if($pretend){
@@ -423,7 +454,9 @@ for my $ticketref (@tickets){
 			$status = &assign($ticketref,$pretend);
 			if($status == -1){
 				die "E: error assigning $id"
-			}else {
+			}elsif($status == 1){
+				$stats{UPTODATE}++;
+			}else{
 				print "I: $id assigned\n";
 				$stats{OK}++;
 			}
@@ -437,6 +470,7 @@ print <<EOSTAT;
 I:	$stats{OK} tickets assigned
 I:	$stats{NO_PORT} tickets without or with incorrect port
 I:	$stats{NO_MAINT} tickets for abandoned ports
+I:	$stats{UPTODATE} tickets already cc-ed
 
 EOSTAT
 
