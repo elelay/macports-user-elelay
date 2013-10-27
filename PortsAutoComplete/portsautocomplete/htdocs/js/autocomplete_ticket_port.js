@@ -19,9 +19,18 @@
 function update_maintainers(data,value){
 	if(value != null && value.length > 1 && value[1] != ""){
 		var firstmaintainer = value[1];
-		var existingowner = $("#action_reassign_reassign_owner").val();
+		/* must be fetched from the summary table, not the 'reassign to'
+		   field because reassign to contains logged in user when the current
+		   owner is macports-tickets
+		 */
+		var existingowner = $("td[headers=h_owner]>a").text().trim();
 		var existingcc = $("#field-cc").val() == "" ? Array() : $("#field-cc").val().split(",\\s*");
-		if(existingowner != "" && existingowner != firstmaintainer){
+		/*
+		 * clear the owner if multiple port
+		 */
+		if(existingowner != ""
+			&& existingowner != "macports-tickets@lists.macosforge.org"
+			&& existingowner != firstmaintainer){
 			existingcc.push(existingowner);
 			existingcc.push(firstmaintainer);
 			$("#action_reassign_reassign_owner").val(function(){
@@ -40,6 +49,8 @@ function update_maintainers(data,value){
 		$("#field-cc").val(function() {
 				return existingcc.join(", ");
 		});
+		/* choose 'reassign to' */
+		$("#action_reassign").attr('checked', 'checked');
 	}
 }
 

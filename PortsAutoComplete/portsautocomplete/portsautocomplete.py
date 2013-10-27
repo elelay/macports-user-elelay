@@ -84,7 +84,7 @@ class PortsAutoComplete(Component):
         query = req.args.get('q', '').lower()
         limit = 100
         try:
-        	limit = min(100,int(req.args.get('limit','1000')))
+        	limit = min(limit,int(req.args.get('limit','1000')))
         except ValueError:
         	pass
         
@@ -152,9 +152,8 @@ class PortsAutoComplete(Component):
             add_script(req, '%s/js/format_item.js' % self.prefix)
             if req.path_info.rstrip() == '/newticket':
                 add_script(req, '%s/js/autocomplete_newticket_port.js' % self.prefix)
-            # script not working yet
-            # else:
-            #    add_script(req, '%s/js/autocomplete_ticket_port.js' % self.prefix)
+            else:
+                add_script(req, '%s/js/autocomplete_ticket_port.js' % self.prefix)
         return (template, data, content_type)
 
     def pre_process_request(self, req, handler):

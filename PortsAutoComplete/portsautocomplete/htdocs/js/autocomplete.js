@@ -592,7 +592,10 @@ $.Autocompleter.Cache = function(options) {
 								csub[csub.length] = x;
 							}
 						});
-						return csub;
+						if(csub.length > 0){
+							return csub;
+						}
+						/* else data will be refetched */
 					}
 				}
 			}
